@@ -1,0 +1,188 @@
+---
+title: "Final_Project"
+output: word_document
+date: "2025-07-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+install.packages("caret")
+```
+
+This R Markdown document implements the project proposal for predicting lung cancer risk using a patient survey dataset. The analysis follows these steps: 1. **Data Loading and Preprocessing**: Loading the data and preparing it for analysis. 2. **Exploratory Data Analysis (EDA)**: Visualizing the data to uncover trends and patterns. 3. **Modeling**: Building several classification models to predict lung cancer. 4. **Evaluation**: Assessing model performance using various metrics. 5. **Feature Importance**: Identifying the most influential predictors of lung cancer.
+
+```{r libraries}
+library(tidyverse)      # For data manipulation and visualization (includes ggplot2, dplyr)
+library(readr)          # For reading CSV files
+library(corrplot)       # For correlation plots
+library(caret)          # For data splitting, preprocessing, and model training
+```
+
+## 3. Data Loading and Preprocessing
+
+We load the `dataset.csv` file and perform the initial cleaning and transformations.
+
+
+```{r dataload}
+df <- read_csv('dataset.csv')
+print("Dataset loaded successfully.")
+
+# Display first few rows and structure
+head(df)
+str(df)
+```
+
+``` {r eda}
+# Check for missing values
+print("The missing values for each column are:")
+colSums(is.na(df))
+
+# --- Data Transformation ---
+# Create a copy for EDA before transformations
+df_eda <- df
+
+# Convert character columns to factors and then to numeric 0/1
+# GENDER: F=0, M=1
+# LUNG_CANCER: NO=0, YES=1
+df <- df %>%
+  mutate(
+    GENDER = as.numeric(factor(GENDER, levels = c("F", "M"))) - 1,
+    LUNG_CANCER = as.numeric(factor(LUNG_CANCER, levels = c("NO", "YES"))) - 1
+  )
+
+# Convert other features from 1/2 to 0/1
+# We subtract 1 from all integer columns except AGE and the already converted GENDER
+cols_to_transform <- setdiff(names(df)[sapply(df, is.integer)], c("AGE", "GENDER", "LUNG_CANCER"))
+
+df <- df %>%
+  mutate(across(all_of(cols_to_transform), ~ . - 1))
+
+print("Dataset after transformations:")
+head(df)
+```
+```{r eda2}
+### Distribution of Lung Cancer Cases
+ggplot(df_eda, aes(x = LUNG_CANCER, fill = LUNG_CANCER)) +
+  geom_bar() +
+  labs(title = "Distribution of Lung Cancer Cases", x = "Lung Cancer", y = "Count") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "viridis")
+```
+
+### Age Distribution
+```{r eda-age}
+ggplot(df_eda, aes(x = AGE)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "dodgerblue", alpha = 0.7) +
+  geom_density(color = "red") +
+  labs(title = "Age Distribution of Patients", x = "Age", y = "Density") +
+  theme_minimal()
+```
+
+### Correlation Matrix
+```{r eda-corr}
+# Calculate correlation matrix on the numeric dataframe
+cor_matrix <- cor(df)
+
+# Plot the correlation matrix
+corrplot(cor_matrix, method = "color", type = "upper", order = "hclust",
+         tl.col = "black", tl.srt = 45, addCoef.col = "black", number.cex = 0.6,
+         title = "Correlation Matrix of Features", mar=c(0,0,1,0))
+```
+
+### Histograms of All Features
+```{r eda-histograms, fig.width=15, fig.height=15}
+df %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 15, fill = 'skyblue', color = 'black') +
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Histograms of All Features") +
+  theme_bw()
+
+```
+### Outlier Detection
+Outlier detection is most relevant for the continuous `AGE` variable. We can use a boxplot to visualize potential outliers.
+```{r eda-outliers-plot}
+ggplot(df_eda, aes(y = AGE)) +
+  geom_boxplot(fill = "lightblue", outlier.color = "red", outlier.shape = 18, outlier.size = 3) +
+  labs(title = "Boxplot of AGE to Detect Outliers", y = "Age") +
+  theme_minimal()
+```
+The plot shows no outliers.
+```{r eda-outliers-list}
+
+```
+
+## 5. Checking Model Assumptions (for Logistic Regression)
+
+Before modeling, we check the key assumptions for logistic regression. Note that assumptions like normality of residuals and homoscedasticity are for *linear* regression and do not apply here.
+
+### Linearity of the Logit
+This assumption states that the relationship between any continuous predictor and the log-odds of the outcome is linear. We check this for our only continuous predictor, `AGE`.
+
+```{r check-linearity}
+# Create a temporary dataframe with the outcome and predictor
+linearity_df <- df %>% select(AGE, LUNG_CANCER)
+
+# Bin the age variable and calculate the logit for each bin
+linearity_df <- linearity_df %>%
+  mutate(age_bin = cut(AGE, breaks = 10)) %>%
+  group_by(age_bin) %>%
+  summarise(
+    n = n(),
+    p_hat = mean(LUNG_CANCER),
+    mean_age = mean(AGE)
+  ) %>%
+  mutate(
+    logit = log(p_hat / (1 - p_hat))
+  )
+
+# Plot the logit against the mean age of each bin
+ggplot(linearity_df, aes(x = mean_age, y = logit)) +
+  geom_point() +
+  geom_smooth(method = "loess", se = FALSE) +
+  labs(title = "Linearity of Logit for AGE",
+       x = "Mean Age",
+       y = "Log-Odds (Logit) of Lung Cancer") +
+  theme_minimal()
+```
+**Interpretation:** Interpretation of Your Linearity Plot
+The plot shows a clear violation of the linearity assumption.
+
+What we want to see: For the assumption to hold, the black dots should fall roughly along a straight line. The blue smoothed line would look more like a straight, upward or downward-sloping line.
+
+What the plot shows: The relationship is distinctly non-linear. The log-odds of having lung cancer decrease from younger ages until about age 55-60, and then they begin to increase again. This creates a "U-shaped" or curved pattern.
+
+Why This is Important:
+A standard logistic regression model assumes that the effect of age is constant and linear. It will try to fit a single straight line through these points, which will be a poor fit and will not accurately capture the real relationship between age and lung cancer risk in our data.
+
+Using a non-linear model like Random Forest and GBM can help because they do not assume linearity.
+### Multicollinearity
+This checks if predictor variables are highly correlated with each other, which can destabilize model coefficients. We use the Variance Inflation Factor (VIF). A VIF score > 5 is often a cause for concern.
+
+```{r check-vif}
+# Fit a full logistic regression model to calculate VIF
+full_model <- glm(LUNG_CANCER ~ ., data = df, family = "binomial")
+
+# Calculate VIF
+vif_scores <- vif(full_model)
+cat("VIF Scores:\n")
+print(vif_scores)
+```
+**Interpretation:** All VIF scores are well below 5, indicating that multicollinearity is not a problem in this dataset.
+
+### Additivity (Testing for Interactions)
+The base model assumes the effect of one predictor is not dependent on the level of another. We can test this by adding an interaction term. For example, does the effect of `SMOKING` on cancer risk depend on `AGE`?
+
+```{r check-additivity}
+# Fit a model with an interaction term
+interaction_model <- glm(LUNG_CANCER ~ AGE + SMOKING + ALCOHOL_CONSUMING + AGE:SMOKING, 
+                         data = df, family = "binomial")
+
+cat("\nSummary of Model with AGE:SMOKING Interaction:\n")
+summary(interaction_model)
+```
+**Interpretation:** In the summary table, look at the p-value (`Pr(>|z|)`) for the interaction term (e.g., `AGE:SMOKING`). If this p-value were very small (e.g., < 0.05), it would suggest a significant interaction, meaning the additivity assumption is violated. In this example, the p-value for `AGE:SMOKING` is not significant, so we don't have strong evidence against the additive assumption for these variables.
