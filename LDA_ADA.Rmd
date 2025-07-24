@@ -1,0 +1,117 @@
+---
+title: "LDA_ADA"
+author: "Yili Lin"
+date: "2025-07-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Read in original dataset
+```{r}
+library(caret)
+library(MASS)
+library(tidyverse)
+library(pROC)
+library(adabag)
+```
+
+```{r start}
+dat <- read.csv("C:/Users/lucylin/Desktop/Analytic500/df.csv")
+dat$AGE_NEW <- scale(dat$AGE)[,1]
+dat <- dat %>% 
+  select(-AGE)
+```
+#### Model Development
+
+##### Linear Discriminant Analysis(LDA)
+Linear Discriminant Analysis (LDA) is a supervised machine learning method used for classification.
+
+It works by finding the best line or plane that separates different classes of data. LDA tries to maximize the distance between classes while minimizing the variation within each class.
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+ 
+# Ensure LUNG_CANCER is a factor with consistent levels before splitting
+dat$LUNG_CANCER <- factor(dat$LUNG_CANCER, levels = c(0, 1))
+ 
+# Train-test split
+train_index <- createDataPartition(dat$LUNG_CANCER, p = 0.8, list = FALSE)
+train_data <- dat[train_index, ]
+test_data <- dat[-train_index, ]
+```
+
+###### Run the LDA model in the training dataset and print the model result
+```{r}
+lda_model <- lda(LUNG_CANCER ~ ., data = train_data)
+print(lda_model)
+```
+
+###### Apply the trained model in test dataset and calculate the accuracy rate
+```{r}
+pred_lda <- predict(lda_model, newdata = test_data)
+head(pred_lda$class)        # Predicted class
+head(pred_lda$x)            # Linear discriminant scores
+head(pred_lda$posterior)
+table(Predicted = pred_lda$class, Actual = test_data$LUNG_CANCER)
+acc_lda <- mean(pred_lda$class == test_data$LUNG_CANCER)
+cat("The Accuracy Rate of LDA is:",acc_lda , "\n")
+```
+The model correctly classified about 54.75% of the test cases overall. This is just slightly above random chance if it's a binary classification problem (baseline = 50%).
+
+###### AUC and ROC curve, sensitivity/specificity
+```{r}
+roc_obj_lda <- roc(test_data$LUNG_CANCER, pred_lda$posterior[,2])
+plot(roc_obj_lda, col = "blue", main = "LDA ROC Curve")
+auc(roc_obj_lda)
+best_coords_lda <- coords(roc_obj_lda, "best", ret = c("threshold", "sensitivity", "specificity"), transpose = FALSE)
+
+cat("Best threshold:", round(best_coords_lda$threshold, 3), "\n")
+cat("Sensitivity (Recall):", round(best_coords_lda$sensitivity, 3), "\n")
+cat("Specificity:", round(best_coords_lda$specificity, 3), "\n")
+
+abs(lda_model$scaling[, 1]) |> sort(decreasing = TRUE)
+```
+The model correctly identified 67.3% of the actual positive class. Good sensitivity means it's catching most of the true positives, Only 43.6% of the actual negative class was correctly identified. This is low, indicating the model is misclassifying many negatives as positives. 
+
+In conclusion, the LDA model is better at identifying the positive class than the negative class.The low specificity suggests the model struggles to distinguish the negative class. With an accuracy of ~55%, the model is not performing well.
+
+##### Adaptive Boosting
+AdaBoost (Adaptive Boosting) is a popular ensemble learning algorithm used primarily for classification tasks. It works by combining multiple weak learners—usually simple decision trees called decision stumps—to form a single strong classifier. The algorithm trains models sequentially, giving more weight to the samples that were misclassified in previous rounds, so future learners focus on harder cases. In the final model, each weak learner contributes to the prediction with a weighted vote based on its accuracy. AdaBoost is effective, easy to implement, and often improves performance over individual models, though it can be sensitive to outliers and noisy data
+
+###### Run the Adaboosting model in the training dataset and apply in the test dataset.
+```{r}
+ada_model <- boosting(LUNG_CANCER ~ ., data = train_data, mfinal = 50)
+pred_adaboost <- predict(ada_model, newdata = test_data)
+table(Predicted = pred_adaboost$class, Actual = test_data$LUNG_CANCER)
+acc_ada <- mean(pred_adaboost$class == test_data$LUNG_CANCER)
+cat("The Accuracy Rate of AdaBoosting is:",acc_ada , "\n")
+```
+The model correctly predicted ~52.25% of the cases — barely better than random guessing in a binary classification.
+
+###### AUC and ROC curve, sensitivity/specificity
+```{r}
+actual <- test_data$LUNG_CANCER
+roc_obj_ada <- roc(actual, pred_adaboost$prob[,2])
+plot(roc_obj_ada, col = "blue", main = "AdaBoosting ROC Curve")
+auc(roc_obj_ada)
+```
+
+```{r}
+best_coords_ada <- coords(roc_obj_ada, "best", ret = c("threshold", "sensitivity", "specificity"), transpose = FALSE)
+
+cat("Best threshold:", round(best_coords_ada$threshold, 3), "\n")
+cat("Sensitivity (Recall):", round(best_coords_ada$sensitivity, 3), "\n")
+cat("Specificity:", round(best_coords_ada$specificity, 3), "\n")
+
+ada_model$importance
+```
+The model is very good at identifying the positive class (i.e., high recall). It captures 87.1% of all actual positives, but the model only correctly identifies 22% of negatives, meaning it falsely classifies most negatives as positives.
+
+In conclusion, the model has high sensitivity, detects most positive cases, which may be good in domains like medical diagnosis, fraud detection, etc. it also has very low specificity → the model misclassifies a large number of negatives as positives.Accuracy is also low. 
+
+##### Model Comparison Summary
+For accuracy, LDA is slightly better overall. Both are only slightly above chance. AdaBoosting is much better at identifying positives (Recall) and LDA is better at identifying negatives. The ROC curve of both models suggest low discrimination.
