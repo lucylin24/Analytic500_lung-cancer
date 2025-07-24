@@ -1,0 +1,170 @@
+---
+title: "RF & SVM"
+author: "Ruqian Cheng"
+date: "2025-07-24"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE)
+```
+
+```{r}
+# Load libraries
+library(tidyverse)
+library(caret)
+library(randomForest)
+library(e1071)
+library(pROC)
+
+# Load data
+#df <- read_csv("df.csv")
+
+# Convert factor variables
+df$GENDER <- as.factor(df$GENDER)
+df$LUNG_CANCER <- as.factor(df$LUNG_CANCER)
+
+# Ensure categorical predictors are factors
+categorical_vars <- setdiff(names(df), c("AGE"))
+df[categorical_vars] <- lapply(df[categorical_vars], as.factor)
+```
+
+### Cross-validation
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+# Ensure LUNG_CANCER is a factor with consistent levels before splitting
+df$LUNG_CANCER <- factor(df$LUNG_CANCER, levels = c(0, 1))
+
+# Train-test split
+train_index <- createDataPartition(df$LUNG_CANCER, p = 0.8, list = FALSE)
+train_data <- df[train_index, ]
+test_data <- df[-train_index, ]
+```
+
+## RANDOM FOREST MODEL
+```{r}
+rf_model <- randomForest(LUNG_CANCER ~ ., data = train_data, ntree = 500, importance = TRUE)
+
+# Predictions
+rf_preds <- predict(rf_model, newdata = test_data)
+```
+
+### Performance
+```{r}
+# Confusion Matrix
+cat("Random Forest Performance:\n")
+print(confusionMatrix(rf_preds, test_data$LUNG_CANCER))
+
+# Variable Importance Plot
+varImpPlot(rf_model)
+```
+
+### ROC & AUC
+```{r}
+# Generate predicted probabilities for the positive class (class "1")
+rf_probs <- predict(rf_model, newdata = test_data, type = "prob")[, "1"]
+
+# Create ROC object
+roc_obj <- roc(test_data$LUNG_CANCER, rf_probs)
+
+# Plot ROC curve
+plot(roc_obj, col = "blue", lwd = 2, main = "ROC Curve - Random Forest")
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+# Display AUC
+auc_value <- auc(roc_obj)
+print(paste("AUC:", round(auc_value, 4)))
+```
+
+- **Accuracy**: 53.59%  
+  - Slightly higher than the no-information rate (50.58%), but not statistically significant (p = 0.07628).
+
+- **Kappa statistic**: 0.0727  
+  - Indicates weak agreement between predicted and actual labels.
+
+- **Sensitivity (Recall for class 0)**: 57.77%  
+  - The model moderately identifies individuals without lung cancer.
+
+- **Specificity (Recall for class 1)**: 49.50%  
+  - Lower performance in identifying individuals with lung cancer.
+
+- **Balanced Accuracy**: 53.64%  
+  - Suggests the model performs only slightly better than random guessing.
+  
+- **AUC (Area Under the ROC Curve)**: 0.5555  
+  - The ROC curve indicates limited discriminative ability. An AUC slightly above 0.5 confirms that the model does not strongly distinguish between classes.
+
+
+- **Top Important Predictors** (from variable importance plot):
+  - `AGE`
+  - `WHEEZING`
+  - `SWALLOWING_DIFFICULTY`
+  - `YELLOW_FINGERS`
+  - `CHEST_PAIN`
+
+> **Conclusion**:  
+  The Random Forest model identified some relevant predictors of lung cancer risk but showed limited predictive power overall. While slightly better than random guessing, both the confusion matrix and AUC results suggest that further model tuning or alternative approaches may be needed to improve classification performance.
+
+## SUPPORT VECTOR MACHINE (SVM)
+```{r}
+# SVM works better with numeric predictors; convert factors to numeric
+train_svm <- train_data %>% mutate(across(-LUNG_CANCER, ~ as.numeric(as.character(.))))
+test_svm <- test_data %>% mutate(across(-LUNG_CANCER, ~ as.numeric(as.character(.))))
+
+# Train SVM with radial kernel
+svm_model <- svm(LUNG_CANCER ~ ., data = train_svm, kernel = "radial", probability = TRUE)
+
+# Predict on test data
+svm_preds <- predict(svm_model, newdata = test_svm)
+
+# Ensure both prediction and true labels have same factor levels
+true_labels <- factor(test_data$LUNG_CANCER, levels = c(0, 1))
+pred_labels <- factor(svm_preds, levels = c(0, 1))
+
+# Evaluate with confusion matrix
+cat("SVM Performance:\n")
+print(confusionMatrix(pred_labels, true_labels))
+```
+
+### ROC & AUC
+```{r}
+svm_probs <- attr(predict(svm_model, newdata = test_svm, probability = TRUE), "probabilities")[, "1"]
+svm_roc <- roc(test_data$LUNG_CANCER, svm_probs)
+plot(svm_roc, col = "red", main = "ROC Curve - SVM")
+auc(svm_roc)
+```
+
+- **Accuracy**: 50.58%  
+  - Equal to the no-information rate, with *p = 0.5164*, indicating that the model performs no better than random guessing.
+
+- **Kappa**: 0.0109  
+  - Suggests minimal agreement between predicted and actual labels beyond chance.
+
+- **Sensitivity (Recall for class 0)**: 46.96%  
+  - The model shows poor ability to correctly identify individuals without lung cancer.
+
+- **Specificity (Recall for class 1)**: 54.13%  
+  - Slightly better at detecting individuals with lung cancer, but still suboptimal.
+
+- **Balanced Accuracy**: 50.54%  
+  - Indicates overall poor classification performance, close to random.
+
+- **Positive Predictive Value (Precision)**: 50.00%  
+  - The model’s predictions for the negative class (no cancer) are no more accurate than chance.
+  
+- **AUC (Area Under the ROC Curve)**: 0.5403  
+  - The ROC curve for the SVM model confirms that it performed only marginally better than random guessing. The low AUC value suggests weak discriminative power.
+
+- **Conclusion**:  
+  The SVM model with a radial kernel showed limited predictive ability. Its overall performance metrics and AUC value suggest that it failed to capture meaningful patterns in the data. It may benefit from extensive hyperparameter tuning, feature selection, or alternative modeling approaches.
+
+### Model Comparison: Random Forest vs. SVM
+
+Between the two models evaluated, Random Forest demonstrated slightly better overall performance compared to Support Vector Machine (SVM). It showed improved accuracy, better balance between sensitivity and specificity, and stronger agreement with the true labels.
+
+While both models struggled to produce high predictive power, Random Forest was more effective in identifying key predictors and performed marginally better in classification tasks. In contrast, the SVM model performed close to random guessing, suggesting it may not be well-suited for this dataset without further tuning or preprocessing.
+
+Based on these results, Random Forest appears to be the more reliable choice for predicting lung cancer risk in this study. Future work could focus on optimizing ensemble methods or exploring other non-linear models to improve classification performance.
+
