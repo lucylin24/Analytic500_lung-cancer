@@ -1,0 +1,169 @@
+---
+title: "KNNandNaive"
+output: html_document
+author: "Tazeen Khan"
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(caret)  # For model training and data preprocessing
+library(e1071)  # For Naive Bayes
+library(class)   # For KNN
+data <- read.csv("dataset.csv")
+
+head(data)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r}
+data$LungCancer <- as.factor(data$LUNG_CANCER)
+
+sum(is.na(data))  # Check for missing values
+data <- na.omit(data)  
+
+set.seed(123)  # For reproducibility
+trainIndex <- createDataPartition(data$LungCancer, p = 0.8, list = FALSE)
+trainData <- data[trainIndex, ]
+testData <- data[-trainIndex, ]
+```
+
+
+```{r}
+# Train KNN model
+knn_model <- train(LungCancer ~ ., data = trainData, method = "knn", 
+                   tuneGrid = data.frame(k = c(3, 5, 7, 9)), 
+                   trControl = trainControl(method = "cv", number = 10))
+
+# Print the best k
+print(knn_model$bestTune)
+
+# Predict on the test set
+knn_predictions <- predict(knn_model, newdata = testData)
+
+# Evaluate the KNN model
+confusionMatrix(knn_predictions, testData$LungCancer)
+
+
+
+```
+
+```{r}
+# Train Naive Bayes model
+nb_model <- naiveBayes(LungCancer ~ ., data = trainData)
+
+# Predict on the test set
+nb_predictions <- predict(nb_model, newdata = testData)
+
+# Evaluate the Naive Bayes model
+confusionMatrix(nb_predictions, testData$LungCancer)
+
+```
+
+
+```{r}
+# Accuracy for KNN
+knn_accuracy <- sum(knn_predictions == testData$LungCancer) / nrow(testData)
+cat("KNN Accuracy: ", knn_accuracy, "\n")
+
+# Accuracy for Naive Bayes
+nb_accuracy <- sum(nb_predictions == testData$LungCancer) / nrow(testData)
+cat("Naive Bayes Accuracy: ", nb_accuracy, "\n")
+```
+
+
+```{r}
+preProcess_model <- preProcess(trainData[, -ncol(trainData)], method = c("center", "scale"))
+trainData_scaled <- predict(preProcess_model, trainData[, -ncol(trainData)])
+testData_scaled <- predict(preProcess_model, testData[, -ncol(testData)])
+
+# Then rerun KNN with scaled data
+knn_model <- train(LUNG_CANCER ~ ., data = trainData_scaled, method = "knn", 
+                   tuneGrid = data.frame(k = c(3, 5, 7, 9)), 
+                   trControl = trainControl(method = "cv", number = 10))
+
+knn_predictions_scaled <- predict(knn_model, newdata = testData_scaled)
+confusionMatrix(knn_predictions_scaled, testData$LungCancer)
+
+```
+
+
+```{r}
+# KNN Model Performance Metrics
+knn_metrics <- confusionMatrix(knn_predictions, testData$LungCancer)
+knn_accuracy <- knn_metrics$overall["Accuracy"]
+knn_precision <- knn_metrics$byClass["Precision"]
+knn_recall <- knn_metrics$byClass["Recall"]
+knn_f1 <- knn_metrics$byClass["F1"]
+
+# Naive Bayes Model Performance Metrics
+nb_metrics <- confusionMatrix(nb_predictions, testData$LungCancer)
+nb_accuracy <- nb_metrics$overall["Accuracy"]
+nb_precision <- nb_metrics$byClass["Precision"]
+nb_recall <- nb_metrics$byClass["Recall"]
+nb_f1 <- nb_metrics$byClass["F1"]
+
+# Create a summary table
+model_comparison <- data.frame(
+  Model = c("KNN", "Naive Bayes"),
+  Accuracy = c(knn_accuracy, nb_accuracy),
+  Precision = c(knn_precision, nb_precision),
+  Recall = c(knn_recall, nb_recall),
+  F1_Score = c(knn_f1, nb_f1)
+)
+
+# Print the comparison table
+print(model_comparison)
+
+```
+
+
+```{r}
+# Install and load the pheatmap library (for better visualization of confusion matrix)
+install.packages("pheatmap")
+library(pheatmap)
+
+# Confusion Matrix for KNN
+knn_cm <- confusionMatrix(knn_predictions, testData$LungCancer)$table
+# Confusion Matrix for Naive Bayes
+nb_cm <- confusionMatrix(nb_predictions, testData$LungCancer)$table
+
+# Plot confusion matrix for KNN
+pheatmap(knn_cm, display_numbers = TRUE, cluster_rows = FALSE, cluster_cols = FALSE, 
+         main = "Confusion Matrix for KNN")
+
+# Plot confusion matrix for Naive Bayes
+pheatmap(nb_cm, display_numbers = TRUE, cluster_rows = FALSE, cluster_cols = FALSE, 
+         main = "Confusion Matrix for Naive Bayes")
+```
+
+```{r}
+# Install and load the pROC library for ROC plotting
+install.packages("pROC")
+library(pROC)
+
+# Generate ROC for KNN
+knn_probs <- as.numeric(predict(knn_model, newdata = testData, type = "prob")[,2])  # Get probabilities for class 1 (lung cancer)
+knn_roc <- roc(testData$LungCancer, knn_probs)
+
+# Generate ROC for Naive Bayes
+nb_probs <- as.numeric(predict(nb_model, newdata = testData, type = "raw")[,2])  # Get probabilities for class 1 (lung cancer)
+nb_roc <- roc(testData$LungCancer, nb_probs)
+
+# Plot ROC curve for both models
+plot(knn_roc, col = "blue", main = "ROC Curve Comparison", 
+     xlab = "False Positive Rate", ylab = "True Positive Rate")
+plot(nb_roc, col = "red", add = TRUE)
+
+# Add a legend
+legend("bottomright", legend = c("KNN", "Naive Bayes"), 
+       col = c("blue", "red"), lty = 1, cex = 0.8)
+
+```
